@@ -1,0 +1,8 @@
+package: api
+output: internal/api/jina.gen.go
+generate:
+  models: true
+  std-http-server: true
+output-options:
+  include-operation-ids:
+    - rerank_v1_rerank_post
