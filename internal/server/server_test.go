@@ -41,16 +41,31 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 func TestHealthAndValidation(t *testing.T) {
 	h := New(config.Config{MaxRequestBytes: 1024, MaxDocuments: 1, MaxDocumentBytes: 10})
-	for _, path := range []string{"/healthz", "/readyz"} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s status=%d", path, rec.Code)
-		}
-	}
 	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status=%d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/rerank", strings.NewReader(`{"query":"","documents":[]}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReadyReflectsOVMSHealth(t *testing.T) {
+	for _, tc := range []struct{ upstream, want int }{{http.StatusOK, http.StatusOK}, {http.StatusServiceUnavailable, http.StatusServiceUnavailable}} {
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/v2/health/ready" {
+				t.Fatalf("path=%s", r.URL.Path)
+			}
+			return &http.Response{StatusCode: tc.upstream, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+		})}
+		h := newHandler(config.Config{UpstreamURL: "http://ovms/v3/rerank"}, client)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+		if rec.Code != tc.want {
+			t.Fatalf("upstream=%d status=%d", tc.upstream, rec.Code)
+		}
 	}
 }

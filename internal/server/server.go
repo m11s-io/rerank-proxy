@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/m11s-io/rerank-proxy/internal/api"
 	"github.com/m11s-io/rerank-proxy/internal/config"
@@ -36,11 +37,34 @@ func newHandler(cfg config.Config, client *http.Client) http.Handler {
 	h := &Handler{cfg: cfg, client: client}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", ok)
-	mux.HandleFunc("GET /readyz", ok)
+	mux.HandleFunc("GET /readyz", h.ready)
 	return api.HandlerFromMux(h, mux)
 }
 func ok(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
+	u, err := url.Parse(h.cfg.UpstreamURL)
+	if err != nil || u.Host == "" {
+		writeError(w, http.StatusServiceUnavailable, "upstream unavailable")
+		return
+	}
+	u.Path = "/v2/health/ready"
+	u.RawQuery = ""
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	resp, err := h.client.Do(req)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "upstream unavailable")
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, http.StatusServiceUnavailable, "upstream unavailable")
+		return
+	}
+	ok(w, r)
 }
 
 // RerankV1RerankPost implements the operation generated from Jina's OpenAPI specification.
